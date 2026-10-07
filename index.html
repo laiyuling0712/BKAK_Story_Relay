@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GAS 聊天室</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; hheight: 100vh; background: #f0f2f5; }
+        #role-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+        .modal-content { background: white; padding: 30px; border-radius: 8px; text-align: center; max-width: 400px; width: 90%; }
+        .btn { padding: 10px 20px; margin: 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        .btn-primary { background: #0084ff; color: white; }
+        .btn-secondary { background: #e4e6eb; color: black; }
+        #chat-container { display: flex; flex-direction: column; height: 100vh; max-width: 600px; margin: 0 auto; width: 100%; background: white; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        #message-box { flex: 1; padding: 20px; overflow-y: auto; border-bottom: 1px solid #ddd; }
+        .msg { margin-bottom: 15px; padding: 10px; border-radius: 8px; background: #e4e6eb; max-width: 80%; width: fit-content; }
+        .msg.me { background: #0084ff; color: white; margin-left: auto; }
+        .msg .meta { font-size: 11px; color: #65676b; margin-bottom: 4px; }
+        .msg.me .meta { color: #e4e6eb; }
+        #input-area { display: flex; padding: 10px; background: #fff; }
+        #input-text { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 4px; outline: none; }
+        #send-btn { margin-left: 10px; }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+    <!-- 身分確認彈窗 -->
+    <div id="role-modal">
+        <div class="modal-content">
+            <h3>請選擇您的身分進入聊天室</h3>
+            <button class="btn btn-primary" onclick="selectRole('writer')">我是寫手</button>
+            <button class="btn btn-secondary" onclick="selectRole('visitor')">我是遊客</button>
+            
+            <div id="writer-login" class="hidden" style="margin-top: 20px;">
+                <input type="text" id="writer-username" placeholder="請輸入寫手帳號" style="padding: 8px; width: 70%;">
+                <button class="btn btn-primary" style="padding: 8px 15px; margin: 0;" onclick="loginWriter()">登入</button>
+            </div>
+            <p id="login-error" style="color: red; font-size: 14px; margin-top: 10px;"></p>
+        </div>
+    </div>
+
+    <!-- 聊天室主體 -->
+    <div id="chat-container">
+        <div id="message-box"></div>
+        <div id="input-area">
+            <input type="text" id="input-text" placeholder="請輸入訊息..." disabled>
+            <button id="send-btn" class="btn btn-primary" onclick="sendMessage()" disabled>發送</button>
+        </div>
+    </div>
+
+    <script>
+        // ⚠️ 請替換成您部署完 GAS 後取得的網頁應用程式網址
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbwz5SkwU4AS_2VSQvU9_wuzRHckfgfIrojkOUMlWuNSbWBayILmuIOlpt1hUrKYnRUBag/exec"; 
+        
+        let currentUser = "遊客";
+        let isWriter = false;
+
+        // 初始化：載入歷史訊息
+        window.onload = () => {
+            fetchMessages();
+            setInterval(fetchMessages, 5000); // 每 5 秒自動重新整理聊天內容
+        };
+
+        function selectRole(role) {
+            if (role === 'visitor') {
+                document.getElementById('role-modal').classList.add('hidden');
+                document.getElementById('input-text').placeholder = "遊客僅供瀏覽，無法發言";
+            } else {
+                document.getElementById('writer-login').classList.remove('hidden');
+            }
+        }
+
+        async function loginWriter() {
+            const username = document.getElementById('writer-username').value.trim();
+            if (!username) return alert("請輸入帳號");
+            
+            document.getElementById('login-error').innerText = "驗證中...";
+            
+            try {
+                const response = await fetch(GAS_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: 'verifyWriter', username: username })
+                });
+                const res = await response.json();
+                
+                if (res.success) {
+                    currentUser = username;
+                    isWriter = true;
+                    document.getElementById('role-modal').classList.add('hidden');
+                    document.getElementById('input-text').removeAttribute('disabled');
+                    document.getElementById('send-btn').removeAttribute('disabled');
+                    document.getElementById('input-text').placeholder = `以寫手 [${username}] 身分發言...`;
+                } else {
+                    document.getElementById('login-error').innerText = "帳號錯誤，非授權寫手！";
+                }
+            } catch (err) {
+                document.getElementById('login-error').innerText = "連線失敗，請檢查 GAS 網址或權限設定。";
+            }
+        }
+
+        async function fetchMessages() {
+            try {
+                const response = await fetch(GAS_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: 'getMessages' })
+                });
+                const res = await response.json();
+                if (res.success) {
+                    renderMessages(res.messages);
+                }
+            } catch (err) {
+                console.error("無法取得訊息:", err);
+            }
+        }
+
+        function renderMessages(messages) {
+            const msgBox = document.getElementById('message-box');
+            // 記住目前的滾動位置是否在底部
+            const isAtBottom = msgBox.scrollHeight - msgBox.clientHeight <= msgBox.scrollTop + 50;
+            
+            msgBox.innerHTML = "";
+            messages.forEach(msg => {
+                const div = document.createElement('div');
+                const isMe = msg.username === currentUser;
+                div.className = `msg ${isMe ? 'me' : ''}`;
+                
+                // 格式化時間 (GAS 傳回的可能需要轉換)
+                const timeStr = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                
+                div.innerHTML = `<div class="meta">${msg.username} · ${timeStr}</div><div>${msg.text}</div>`;
+                msgBox.appendChild(div);
+            });
+
+            if (isAtBottom) {
+                msgBox.scrollTop = msgBox.scrollHeight;
+            }
+        }
+
+        async function sendMessage() {
+            if (!isWriter) return;
+            const input = document.getElementById('input-text');
+            const text = input.value.trim();
+            if (!text) return;
+
+            input.value = ""; // 清空輸入框
+            
+            try {
+                await fetch(GAS_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: 'sendMessage', username: currentUser, text: text })
+                });
+                fetchMessages(); // 立即更新
+            } catch (err) {
+                alert("發送失敗");
+            }
+        }
+        
+        // 支援 Enter 鍵發送
+        document.getElementById('input-text').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+    </script>
+</body>
+</html>
